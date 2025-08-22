@@ -1,0 +1,509 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+
+#define POS_STATE_VECTOR 3
+#define VEL_STATE_VECTOR 3
+#define MAX_ORBIT_CLYPAR 7
+#define Type22_data_length1 37
+#define Type22_data_length2 37
+#define MAX_WAV_TraX_info 100
+#define MAX_WAV_SBAS_SAT 14
+#define MAX_GPS_SAT1 16
+#define MAX_NAV_SAT1 14
+#define MAX_NAV_SAT2 4
+#define UART_Header_OKCAAc 0xACCA
+#define BUFFER_SIZE 1800
+#define INPUT_FILE "21ines.txt"
+#define EPHEMERIS_FILE "ephemeris_data.bin"  // Add ephemeris input file
+#define OUTPUT_FILE "newoutput.txt"
+#define NUM_GPS_CHANNEL 16
+#define TX_Buffer_size 1800
+#define uint8_t unsigned char
+#define uint16_t unsigned short
+#define uint32_t unsigned int
+#define uint64_t unsigned long long
+
+FILE *fp2;
+FILE *ephemeris_fin = NULL;  // Add ephemeris file pointer
+uint16_t uttemp_wk_num = 0;
+//uint64_t u1clkksum=0 ;
+uint8_t msmt_counter = 0;
+unsigned char TxBuffer[TX_Buffer_size] = {0};
+
+typedef struct { unsigned char TxBuffer[BUFFER_SIZE]; } UART;
+
+static uint16_t to_be16(uint16_t x){ return (x>>8)|(x<<8); }
+static uint32_t to_be32(uint32_t x){ return ((x>>24)&0xFF)|((x>>8)&0xFF00)|((x<<8)&0xFF0000)|((x<<24)&0xFF000000); }
+static uint64_t to_be64(uint64_t x){
+    return ((x>>56)&0xFFULL) | ((x>>40)&0xFF00ULL) | ((x>>24)&0xFF0000ULL) | ((x>>8)&0xFF000000ULL) |
+    ((x<<8)&0xFF00000000ULL) | ((x<<24)&0xFF0000000000ULL) | ((x<<40)&0xFF000000000000ULL) |
+    ((x<<56)&0xFF00000000000000ULL);
+}
+
+/* --- ICD-1uart --- */
+
+#pragma pack(push,1)
+typedef struct {
+    uint16_t usUart_Hdr;
+    uint8_t ucMsmt_Ctr;
+    uint8_t ucRec_State;
+    uint8_t ucAnt_Sts;
+
+/* Pos(3), Vel(3),RevClk(1),RevClkDrift(1) */
+/* Pos(3), Vel(3),RevClk(1),RevClkDrift(1) */
+/* Pos(3), Vel(3),RevClk(1),RevClkDrift(1) */
+
+uint8_t ucPVT_Avg_Sts;
+    uint8_t ucGPS_Sat;
+uint8_t ucNAV_Sat;
+    uint16_t    usGPS_WeekNo;    /* GPS Week Number */
+double    lGPS_TimeOfWeek;    /* Seconds of Week */
+double    lleoSvPos[POS_STATE_VECTOR];
+    float    fleoSvVel[VEL_STATE_VECTOR];
+    float f6dop;
+    float fpdop;
+float fDelta_Time;
+uint16_t    usChksum;    /* GPS Week Number */
+uint16_t    usNAV_WeekNo;    /* Seconds of Week */
+double    lNAV_TimeOfWeek;
+uint8_t ucType22_data[Type22_data_length1];    /* Indexes of usable satellites for looping */
+uint8_t ucGPS_SV_StsLB[MAX_GPS_SAT1];
+    uint8_t ucGPS_SVID[MAX_GPS_SAT1];    /* CNDR trackedin channels*/
+uint8_t ucGPS_Cndr[MAX_GPS_SAT1];
+    double   lGPS_MeasCode[MAX_GPS_SAT1];    /* 15monthP1 code */
+    double   lGPS_MeasDoppler[MAX_GPS_SAT1];    /* Doppler measurement */
+    double   lGPS_MeasCarrier[MAX_GPS_SAT1];    /* 15monthP1 carrier */
+double lGPS_Rec_CLK_bias;
+    double lGPS_Rec_CLK_drift;
+uint8_t ucEphemeris_SVID_Data[71];//10elta_Time; need to define structure
+    uint16_t usMsg_Rec_ctr;
+uint8_t ucAST_Debug_Info[22];
+    uint8_t ucNAV_SVID[MAX_NAV_SAT1];    /* Sat Ids trackedin channels*/
+    uint8_t ucNAV_Cndr[MAX_NAV_SAT1];    /* CNDR trackedin channels*/
+    double   lNAV_MeasCode[MAX_NAV_SAT2];    /* 15monthP1 code */
+    double   lNAV_MeasDoppler[MAX_NAV_SAT2];    /* Doppler measurement */
+    double   lGPSSV[MAX_GPS_SAT1][MAX_ORBIT_CLYPAR];    /* Sat index wise GPS state vectors */
+int8_t iGPS_Elevation[MAX_GPS_SAT1];
+uint16_t iGPS_Azimuth[MAX_GPS_SAT1];
+uint16_t usUart_ASTTx_ctr;
+uint8_t ucAST_RST_CTr;
+uint8_t ucAST_RST_ID;
+    uint8_t ucGPS_SV_StsMB[MAX_GPS_SAT1];    /* Indexes of usable satellites for looping */
+uint16_t usNAV_SV_Sts[MAX_NAV_SAT1];
+double lNAV_Rec_CLK_bias;
+    double lNAV_Rec_CLK_drift;
+    uint8_t ucAST_Debug_Spare[40];
+    uint16_t usTotal_Chksum;
+
+    /*uint16_t header; /* 0xACCA
+uint8_t msmt_counter;
+uint8_t nav_state;
+uint8_t antenna_status;
+uint8_t pvt_status;
+uint8_t gps_nav_sats;
+uint8_t navic_sats;
+uint16_t GPS_NK_Num;
+double IDGps_Tow;
+double IDRec_Pos[3];
+float IDRec_Val[3];
+float ID6dop_Pdop[2];
+uint16_t Dlt_Time[2];
+uint16_t Checksum;
+uint16_t Nav_Week_Num;
+double IDNav_Tow;
+uint8_t Type_22_Data[37];
+uint8_t Sv_status[16];
+uint8_t Sv_id[16];
+uint8_t Cndr[16];
+double IDPR[16];
+double IDDR[16];
+double IDCR[16];
+double IDBias;
+double IDDrift;
+uint8_t Ephemeris[71];
+uint16_t Msg_Rec_ctr;
+uint8_t Debug_info[22];
+uint8_t SV_ID[14];
+uint8_t CNDR[14];
+double IDPseudo_Range[4];
+double IDDelta_Range[4];
+double IDGPSSV_Pos[NUM_GPS_CHANNEL][7];
+uint8_t Elevation[NUM_GPS_CHANNEL];
+uint16_t Azimuth[NUM_GPS_CHANNEL];
+uint16_t Uart_Tx_ctr;
+uint8_t Ast_Rst_ctr;
+uint8_t Ast_Rst_id;
+uint8_t Ast_Debug[100];
+
+uint16_t Checksum1;*/
+} GPSPacketInp;
+#pragma pack(pop)
+
+// Use a pointer for the packet
+GPSPacketInp *GLStGPSPacketInp;
+
+#pragma pack(push,1)
+struct ValidationFlag {
+    // Byte 0: ODP Validity Flag (2 bits), Number of Rows (4 bits), Reserved (2 bits)
+    uint8_t ucdOp_Validity_Flag : 2;
+    uint8_t ucFlt_Est_Nsmt_T : 2;
+    uint8_t ucNum_Raw_Nsmt : 4;
+
+    uint8_t ucNum_Sm_Nsmt : 4;
+    uint8_t ucNum_Est_Nsmt : 4;
+
+    // Byte 1: Filter (8 bits)
+    uint8_t ucFilter_Init_Ctr;
+
+    uint8_t ucFilter_Init_Rsn : 4;
+    // Bytes 2-9: KF (64 bits)
+
+    uint8_t ucKf_Res_St[8];
+    uint8_t ucRec_Instant_Flag : 1;
+    uint8_t ucFlt_Est_Flag : 1;
+    uint8_t ucFlt_Init_Flag : 1;
+    uint8_t ucInstant_Sol_Flag : 1;
+    // Bytes 11-13: Reserved to make up 14 bytes
+    uint8_t Odp_Inf[2];
+
+}; 
+#pragma pack(pop)
+
+/* --- ICD-3 Odp--- */
+struct StOdp{
+
+    double lOdp_Pos[POS_STATE_VECTOR];
+    float fOdp_Val[VEL_STATE_VECTOR];
+    float fEst_CLK_Bias[2];
+    uint8_t ucValidationFlag_Sts [14];
+
+    uint16_t usSps_Upd_Ctr;
+    uint16_t usUart_Tr_Ctr;
+    uint16_t usUart_Rec_Ctr;
+    uint8_t ucUart_Cksum_Fctr;
+    uint8_t ucI2C_Tc_Rec_Ctr;
+    uint8_t ucTC_Ctr;
+    uint8_t ucTc_Upd_Ctr;
+    uint8_t ucAstr_Rst_Ctr;
+    uint8_t ucSam_Rst_Ctr;
+    uint8_t ucSps_Rst_Ctr;
+    uint8_t ucRst_Id;
+    uint8_t ucSam_Hlth_DebInfo[8];
+    // uint16_t usTotal_Chksum1;
+
+};
+
+/* --- ICD-2 I2C--- */
+#pragma pack(push,1)
+typedef struct
+
+{
+    uint16_t usUart_Hdr;
+    uint8_t ucMsmt_Ctr;
+    uint8_t ucRec_State;
+    uint8_t ucAnt_Sts;
+    uint8_t ucPVT_Ava_Sts;
+    uint8_t ucGPS_Sat;
+
+    uint8_t ucNAV_Sat;
+    uint16_t usGPS_WeekNo; /* GPS week number */
+    double lGPS_TimeOfWeek; /* Seconds of week */
+    double lleoSvPos[POS_STATE_VECTOR];
+    float fleoSvVel[VEL_STATE_VECTOR];
+    float f6dop;
+    float fPdop;
+
+    uint16_t usDelta_Time[2];
+    uint16_t usChksum;
+    uint16_t usNAV_WeekNo; /* GPS week number */
+    double lNAV_TimeOfWeek; /* Seconds of week */
+    uint8_t ucType22_data[Type22_data_length1];
+
+uint8_t ucGPS_SV_StsLB[MAX_GPS_SAT1]; /* Indexes of usable satellites for looping */
+    uint8_t ucGPS_SVID[MAX_GPS_SAT1];
+uint8_t ucGPS_Cndr[MAX_GPS_SAT1]; /* CNOR trackedin channels*/
+    double lgps_MeasCode[MAX_GPS_SAT1]; /* IsmoothPl code */
+    double lgps_MeasDoppler[MAX_GPS_SAT1]; /* Doppler measurement */
+    double lgps_MeasCarrier[MAX_GPS_SAT1]; /* IsmoothPl carrier */
+double lgps_Rec_clk_bias;
+    double lgps_Rec_clk_drift;
+uint8_t ucEphemeris_SVID_Data[71];//10elta_Time; need to define structure
+    uint16_t usMsg_Rec_ctr;
+uint8_t ucAST_Debug_Info[22];
+    uint8_t ucNAV_SVID[MAX_NAV_SAT1];
+    uint8_t ucNAV_Cndr[MAX_NAV_SAT1];
+
+    struct StOdp gStGpsDataOdp;
+
+}StGpsDataI2c;
+#pragma pack(pop)
+//StGpsDataI2c GLStGPSPacketImp;
+
+// Use a pointer for the packet
+StGpsDataI2c *GLStI2cImp ;
+
+/* --- ICD-4 ephemeris--- */
+typedef struct
+{
+    uint8_t ucSvld;
+    uint8_t ucIode;
+    int16_t nlcrs;
+    int16_t nlDelta_N;
+    int32_t nMn_Anomaly;
+    int16_t nICuc;
+    uint32_t nEccentricity;
+    int16_t nICus;
+    uint32_t nSqrt_A;
+    uint16_t usToe;
+    int16_t nicic;
+    int32_t nOmega_Nt;
+    int16_t nicis;
+    uint32_t nInclination_Nt;
+    int16_t nicrc;
+    int32_t nArg_Perigee;
+    int32_t nOmega_Dt;
+    int16_t nInclination_Dt;
+    uint8_t ucLeap_Sec;
+    uint8_t ucUra;
+    int8_t cTgd;
+    int16_t nEphemmeris_Af1 ;
+    int8_t cEphemeris_Af2 ;
+    int32_t nEphemeris_Af0;
+
+}StGpsEphSatWise;
+
+/* --- ICD-5 superdata--- */
+
+typedef struct
+{
+    uint16_t usUart_Hdr;
+    uint8_t ucMsmt_ctr;
+    uint8_t ucRec_State;
+    uint8_t ucAnt_Sts;
+    uint8_t ucPVT_Ava_Sts;
+    uint8_t ucGPS_Sat;
+    uint8_t ucNAV_Sat;
+    uint16_t usGPS_WeekNo; /* GPS week number */
+    double lgps_TimeOfWeek; /* Seconds of week */
+    double lleoSvPos[POS_STATE_VECTOR];
+    float fleoSvVel[VEL_STATE_VECTOR];
+    float f6dop;
+    float fpdop;
+    float fDelta_Time;
+    uint16_t usChksum;
+    uint16_t usNAV_WeekNo; /* GPS week number */
+    double lNAV_TimeOfWeek; /* Seconds of week */
+    uint8_t ucType22_data[Type22_data_length1];
+    uint8_t ucGPS_SV_StsLB[MAX_GPS_SAT1]; /* Indexes of usable satellites for looping */
+    uint8_t ucGPS_SVID[MAX_GPS_SAT1];
+    uint8_t ucGPS_Cndr[MAX_GPS_SAT1]; /* CNOR trackedin channels*/
+    double lgps_MeasCode[MAX_GPS_SAT1]; /* IsmoothPl code */
+    double lgps_MeasDoppler[MAX_GPS_SAT1]; /* Doppler measurement */
+    double lgps_MeasCarrier[MAX_GPS_SAT1]; /* IsmoothPl carrier */
+
+double lGPS_Rec_CLK_bias;
+    double lGPS_Rec_CLK_drift;
+uint8_t ucEphemeris_SVID_Data[71];//Delta_Time; need to define structure
+    uint16_t usMsg_Rec_Ctr;
+uint8_t ucAST_Debug_Info[22];
+    uint8_t ucNAV_SVID[MAX_NAV_SAT1];    /* sat 16s trackedin channels*/
+    uint8_t ucNAV_Cndr[MAX_NAV_SAT1];
+
+//StGpsDataOdp GStGpsDataOdp;
+
+StGpsEphSatWise GISTGpsEphSatWise;
+
+}StGpsDataSuper;
+
+//StGpsDataSuper GListGPSPacketImp;
+
+/* --- ICD-6 Nav71--- */
+
+typedef struct
+{
+    uint8_t ucSvid;
+    uint8_t ucTode;
+    int16_t nICrs;    // 15-bit
+    int32_t nDelta_N;    // 22-bit signed value
+    int32_t nMn_Anomaly ;
+    int16_t nICuc;
+    uint32_t nEccentricity;
+    int16_t nICus;
+    uint32_t nSqrt_A;
+    uint16_t usToe;
+    int16_t nICic;
+    int32_t nOmega_Nt;
+    int16_t nICis;
+    uint32_t nInclination_Nt;
+    int16_t nICrc;
+    uint32_t nArg_Perigee;
+    uint32_t nOmega_Dt;
+    int16_t nInclination_Dt;
+    uint8_t ucLeita_N;
+    uint8_t ucUra;
+    int8_t cTgd;
+    int16_t sEphemeris_af1;
+    int8_t cEphemeris_af2;
+    int32_t nEphemeris_af0;
+    int16_t sBias_Coefficient_A0;
+    int16_t sDrift_Coefficient_A1;
+    int8_t cDrift_Rate_A2;
+    uint8_t ucLp_Sec_Nav;
+    uint16_t usTOM;
+    uint16_t usWeek_Num;
+    int16_t nIA0_UTC;
+    int16_t nIA1_UTC;
+    int8_t cA2_UTC;
+
+}StGpsDataNav;
+
+/*
+FILE *fin = NULL;
+
+static void write_double_le_bytes(unsigned char *dst, double val){
+    union { double d; unsigned char b[8]; } u;
+    u.d = val;    // Little-endian IEEE-754 on typical desktops
+    memcpy(dst, u.b, 8);
+}
+
+void Convert_Eng_data2Hex(void) {
+    // Allocate packet if needed
+    if (!GLStGPSPacketInp) {
+    GLStGPSPacketInp = (GPSPacketInp *)malloc(sizeof(GPSPacketInp));
+    if (!GLStGPSPacketInp) { printf("Allocation failed\n"); return; }
+    }
+
+    // Init
+
+    memset(TxBuffer, 0, sizeof(TxBuffer));
+
+    if (fin == NULL) {
+    printf("Error opening input file\n");
+    return;
+}
+
+memset(GLStGPSPacketInp, 0, sizeof(GPSPacketInp));
+
+// --- Robust scanning (avoid UB): scan into wide ints then cast ...
+
+    GLStGPSPacketInp->usUart_Hdr = UART_Header_OKCAAc;
+    unsigned int wk_num_tmp = 0;
+    if (fscanf(fin, "%u %lf", &wk_num_tmp, &GLStGPSPacketInp->lGPS_TimeOfWeek) != 2) {
+    printf("Bad header line in input\n");
+    return;
+}
+
+    GLStGPSPacketInp->usGPS_WeekNo = (uint16_t)wk_num_tmp;
+    uttemp_wk_num = GLStGPSPacketInp->usGPS_WeekNo;
+
+    for (int i=0;i<3;i++) fscanf(fin, "%lf", &GLStGPSPacketInp->lleoSvPos[i]);
+    for (int i=0;i<3;i++) fscanf(fin, "%f", &GLStGPSPacketInp->fleoSvVel[i]);
+
+    // gps_nav_sats as hex byte
+    unsigned int tmp_hex = 0;
+    fscanf(fin, " %2x", &tmp_hex);
+    GLStGPSPacketInp->ucGPS_Sat = (uint8_t)tmp_hex;
+    // Sv_id as decimal bytes, then conditional read
+    for (int i=0;i<16;i++){
+    unsigned int id_tmp = 0;
+    fscanf(fin, " %2u", &id_tmp);
+    GLStGPSPacketInp->ucGPS_SVID[i] = (uint8_t)id_tmp;
+
+    //if (GLStGPSPacketInp->ucGPS_SVID[i] != 0){
+    unsigned int cndr_tmp = 0;
+    fscanf(fin, " %lf %lf %lf %2u %lf %lf %lf %lf %lf",
+    &GLStGPSPacketInp->lGPS_MeasCode[i], &GLStGPSPacketInp->lGPS_MeasCarrier[i],
+    &GLStGPSPacketInp->lGPS_MeasDoppler[i], &cndr_tmp,
+    &GLStGPSPacketInp->lGPSSV[i][0], &GLStGPSPacketInp->lGPSSV[i][1],
+    &GLStGPSPacketInp->lGPSSV[i][2], &GLStGPSPacketInp->lGPSSV[i][3],
+    &GLStGPSPacketInp->lGPSSV[i][4], &GLStGPSPacketInp->lGPSSV[i][5]);
+    GLStGPSPacketInp->ucGPS_Cndr[i]= (uint8_t)cndr_tmp;
+    }
+
+    // Read ephemeris data from separate file
+    if (ephemeris_fin != NULL) {
+        // Read 56 bytes from ephemeris file
+        size_t bytes_read = fread(GLStGPSPacketInp->ucEphemeris_SVID_Data, 1, 56, ephemeris_fin);
+        
+        // Set remaining 15 bytes to 0
+        if (bytes_read < 56) {
+            // If we couldn't read all 56 bytes, set the rest to 0
+            memset(GLStGPSPacketInp->ucEphemeris_SVID_Data + bytes_read, 0, 71 - bytes_read);
+        } else {
+            // Set bytes 56-70 to 0
+            memset(GLStGPSPacketInp->ucEphemeris_SVID_Data + 56, 0, 15);
+        }
+    } else {
+        // If ephemeris file not available, set all bytes to 0
+        memset(GLStGPSPacketInp->ucEphemeris_SVID_Data, 0, 71);
+    }
+
+    // Copy struct into the TX buffer
+    size_t struct_len = sizeof(GPSPacketInp);
+    if (struct_len > TX_Buffer_size) struct_len = TX_Buffer_size; // safety
+    printf("%zu", sizeof(GPSPacketInp));
+    GLStGPSPacketInp->usUart_ASTTx_ctr = msmt_counter;
+    GLStGPSPacketInp->ucMsmt_Ctr = msmt_counter;
+
+    memcpy(TxBuffer, GLStGPSPacketInp, struct_len);
+    uint16_t uiCHksum = 0;
+    for (int i = 2; i < 1798; ++i) {
+    uiCHksum = (uint16_t)(uiCHksum + TxBuffer[i]);
+    }
+    TxBuffer[1798] = (uint8_t)(uiCHksum & 0xFF);
+    TxBuffer[1799] = (uint8_t)((uiCHksum >> 8) & 0xFF);
+
+    //fprintf(fp2,"%02x\t ",TxBuffer[1798]);
+    //fprintf(fp2,"%02x\t ",TxBuffer[1799]);
+}
+
+void print_StGpsDataOdp_size(void){
+    size_t size = sizeof(struct StOdp);
+    printf("Size of StGpsDataOdp structure is: %zu bytes\n", size);
+}
+
+int main(void){
+    FILE *fin = fopen(INPUT_FILE, "rt"); // text read is fine for fscanf
+    fp2 = fopen(OUTPUT_FILE, "w");
+    ephemeris_fin = fopen(EPHEMERIS_FILE, "rb"); // Open ephemeris file in binary mode
+    
+    unsigned int weeknum=0;
+    if (!fp2){ printf("Error opening output file\n"); return -1; }
+    if (!fin){ printf("Error opening input file\n"); return -1; }
+    if (!ephemeris_fin) { 
+        printf("Warning: Could not open ephemeris file %s. All ephemeris data will be set to 0.\n", EPHEMERIS_FILE);
+    }
+    
+    // printf("Address of structure is : %01lx",GLStGPSPacketInp);
+    printf("sizeof structure: %zu", sizeof(*GLStGPSPacketInp));
+
+print_StGpsDataOdp_size();
+
+while(!feof(fin))//AB (weeknum<3))
+{
+    fprintf(fp2, "\n");
+    Convert_Eng_data2Hex();
+    msmt_counter++;
+    for (int i = 0; i < 1800; ++i){
+    fprintf(fp2, "%02x\t", TxBuffer[i]);
+    }
+    weeknum++;
+    // ++;
+    printf("\n Reading file line:%d ", GLStGPSPacketInp->usUart_ASTTx_ctr);
+}
+
+// Dump the full 1800 bytes as hex
+//Convert_Eng_data2Hex();
+
+fclose(fin);
+fclose(fp2);
+if (ephemeris_fin) fclose(ephemeris_fin);
+
+// Free the packet
+free(GLStGPSPacketInp);
+GLStGPSPacketInp = NULL;
+
+return 0;
+}
