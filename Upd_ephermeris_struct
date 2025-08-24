@@ -1,4 +1,60 @@
 #include <stdio.h>
+#include <stdint.h>
+
+typedef struct
+{
+    uint8_t ucSvld;
+    uint8_t ucIode;
+    int16_t nlcrs;
+    int16_t nlDelta_N;
+    int32_t nMn_Anomaly;
+    int16_t nICuc;
+    uint32_t nEccentricity;
+    int16_t nICus;
+    uint32_t nSqrt_A;
+    uint16_t usToe;
+    int16_t nicic;
+    int32_t nOmega_Nt;
+    int16_t nicis;
+    uint32_t nInclination_Nt;
+    int16_t nicrc;
+    int32_t nArg_Perigee;
+    int32_t nOmega_Dt;
+    int16_t nInclination_Dt;
+    uint8_t ucLeap_Sec;
+    uint8_t ucUra;
+    int8_t cTgd;
+    int16_t nEphemmeris_Af1;
+    int8_t cEphemeris_Af2;
+    int32_t nEphemeris_Af0;
+
+} StGpsEphSatWise;
+
+int main() {
+    size_t total_size = sizeof(StGpsEphSatWise);
+    
+    // Write to file
+    FILE *file = fopen("structure_size.txt", "w");
+    if (file != NULL) {
+        fprintf(file, "Total size of StGpsEphSatWise structure: %zu bytes\n", total_size);
+        fclose(file);
+        printf("Size information written to structure_size.txt\n");
+    } else {
+        printf("Error creating file!\n");
+    }
+    
+    return 0;
+}
+
+
+
+
+
+
+
+
+
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
