@@ -1,0 +1,194 @@
+//odp code 1
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+
+#define POS_STATE_VECTOR 3
+#define VEL_STATE_VECTOR 2
+#define INPUT_FILE "input_odp.txt"
+#define OUTPUT_FILE "odp_output.txt"
+#define TX_Buffer_size 1800
+
+// Define types if not already defined
+#define uint8_t unsigned char
+#define uint16_t unsigned short
+
+/* --- ICD-3 Odp--- */
+#pragma pack(push, 1)
+typedef struct {
+    double lOdp_Pos[POS_STATE_VECTOR];
+    float fOdp_Val[VEL_STATE_VECTOR];
+    float fEst_CLK_Bias[2];
+    uint8_t ucValidationFlag_Sts[14];
+    uint16_t usSps_Upd_Ctr;
+    uint16_t usUart_Tr_Ctr;
+    uint16_t usUart_Rec_Ctr;
+    uint8_t ucUart_Cksum_Fctr;
+    uint8_t ucI2C_Tc_Rec_Ctr;
+    uint8_t ucTC_Ctr;
+    uint8_t ucTc_Upd_Ctr;
+    uint8_t ucAstr_Rst_Ctr;
+    uint8_t ucSam_Rst_Ctr;
+    uint8_t ucSps_Rst_Ctr;
+    uint8_t ucRst_Id;
+    uint8_t ucSam_Hlth_DebInfo[8];
+} StOdp;
+#pragma pack(pop)
+
+FILE *fp_out = NULL;
+FILE *fp_in = NULL;
+uint8_t TxBuffer[TX_Buffer_size] = {0};
+StOdp *GLStOdp = NULL;
+uint8_t msmt_counter = 0;
+
+static void write_double_le_bytes(unsigned char *dst, double val) {
+    union { double d; unsigned char b[8]; } u;
+    u.d = val;
+    memcpy(dst, u.b, 8);
+}
+
+static void write_float_le_bytes(unsigned char *dst, float val) {
+    union { float f; unsigned char b[4]; } u;
+    u.f = val;
+    memcpy(dst, u.b, 4);
+}
+
+void Convert_Odp_Eng_data2Hex(void) {
+    if (!GLStOdp) {
+        GLStOdp = (StOdp *)malloc(sizeof(StOdp));
+        if (!GLStOdp) { 
+            printf("Allocation failed\n"); 
+            return; 
+        }
+    }
+
+    memset(TxBuffer, 0, sizeof(TxBuffer));
+    memset(GLStOdp, 0, sizeof(StOdp));
+
+    if (fp_in == NULL) {
+        printf("Error opening input file\n");
+        return;
+    }
+
+    // Read only the first 6-7 columns as requested
+    // Reading: 3 doubles (lOdp_Pos), 2 floats (fOdp_Val), and optionally more
+    
+    // Read first 3 doubles (lOdp_Pos)
+    for (int i = 0; i < POS_STATE_VECTOR; i++) {
+        if (fscanf(fp_in, "%lf", &GLStOdp->lOdp_Pos[i]) != 1) {
+            printf("Error reading lOdp_Pos[%d]\n", i);
+            return;
+        }
+    }
+
+    // Read next 2 floats (fOdp_Val)
+    for (int i = 0; i < VEL_STATE_VECTOR; i++) {
+        if (fscanf(fp_in, "%f", &GLStOdp->fOdp_Val[i]) != 1) {
+            printf("Error reading fOdp_Val[%d]\n", i);
+            return;
+        }
+    }
+
+    // If you want to read more columns, you can add them here
+    // For example, to read fEst_CLK_Bias:
+    for (int i = 0; i < 2; i++) {
+        if (fscanf(fp_in, "%f", &GLStOdp->fEst_CLK_Bias[i]) != 1) {
+            // If reading fails, set to default value
+            GLStOdp->fEst_CLK_Bias[i] = 0.0f;
+        }
+    }
+
+    // Set some default values for the rest of the structure
+    GLStOdp->usSps_Upd_Ctr = msmt_counter;
+    GLStOdp->usUart_Tr_Ctr = msmt_counter;
+    GLStOdp->usUart_Rec_Ctr = msmt_counter;
+    
+    // Copy struct into the TX buffer
+    size_t struct_len = sizeof(StOdp);
+    if (struct_len > TX_Buffer_size) struct_len = TX_Buffer_size;
+    
+    memcpy(TxBuffer, GLStOdp, struct_len);
+
+    // Calculate checksum (optional)
+    uint16_t uiCHksum = 0;
+    for (int i = 0; i < struct_len; ++i) {
+        uiCHksum = (uint16_t)(uiCHksum + TxBuffer[i]);
+    }
+    
+    // Store checksum at the end if there's space
+    if (struct_len + 2 <= TX_Buffer_size) {
+        TxBuffer[struct_len] = (uint8_t)(uiCHksum & 0xFF);
+        TxBuffer[struct_len + 1] = (uint8_t)((uiCHksum >> 8) & 0xFF);
+    }
+}
+
+void print_odp_hex_output(void) {
+    size_t struct_len = sizeof(StOdp);
+    
+    fprintf(fp_out, "\nMeasurement %d:\n", msmt_counter);
+    fprintf(fp_out, "Hex representation (%zu bytes):\n", struct_len);
+    
+    for (int i = 0; i < struct_len; ++i) {
+        fprintf(fp_out, "%02X", TxBuffer[i]);
+        if ((i + 1) % 16 == 0) fprintf(fp_out, "\n");
+        else if ((i + 1) % 4 == 0) fprintf(fp_out, " ");
+    }
+    fprintf(fp_out, "\n");
+}
+
+void print_structure_details(void) {
+    size_t size = sizeof(StOdp);
+    printf("Size of StOdp structure is: %zu bytes\n", size);
+    printf("Structure layout:\n");
+    printf("  lOdp_Pos[3]: %zu bytes\n", sizeof(double) * 3);
+    printf("  fOdp_Val[2]: %zu bytes\n", sizeof(float) * 2);
+    printf("  fEst_CLK_Bias[2]: %zu bytes\n", sizeof(float) * 2);
+    printf("  ucValidationFlag_Sts[14]: %zu bytes\n", sizeof(uint8_t) * 14);
+    printf("  ... and other fields\n");
+}
+
+int main(void) {
+    fp_in = fopen(INPUT_FILE, "rt");
+    fp_out = fopen(OUTPUT_FILE, "w");
+    
+    if (!fp_out) { 
+        printf("Error opening output file\n"); 
+        return -1; 
+    }
+    if (!fp_in) { 
+        printf("Error opening input file %s\n", INPUT_FILE); 
+        return -1; 
+    }
+    
+    print_structure_details();
+    printf("Processing input file...\n");
+
+    while (!feof(fp_in)) {
+        // Check if we're at the end of file
+        int c = fgetc(fp_in);
+        if (c == EOF) break;
+        ungetc(c, fp_in);
+        
+        Convert_Odp_Eng_data2Hex();
+        print_odp_hex_output();
+        msmt_counter++;
+        
+        // Skip any remaining data on the line if we're only reading first few columns
+        char buffer[256];
+        if (fgets(buffer, sizeof(buffer), fp_in) == NULL) break;
+    }
+
+    fclose(fp_in);
+    fclose(fp_out);
+
+    // Free the allocated memory
+    if (GLStOdp) {
+        free(GLStOdp);
+        GLStOdp = NULL;
+    }
+
+    printf("Conversion completed. Output written to %s\n", OUTPUT_FILE);
+    return 0;
+}
