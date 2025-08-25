@@ -149,6 +149,7 @@ void print_structure_details(void) {
     printf("  ... and other fields\n");
 }
 
+
 int main(void) {
     fp_in = fopen(INPUT_FILE, "rt");
     fp_out = fopen(OUTPUT_FILE, "w");
@@ -190,5 +191,206 @@ int main(void) {
     }
 
     printf("Conversion completed. Output written to %s\n", OUTPUT_FILE);
+    return 0;
+}
+
+
+//code2 odp
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+
+#define POS_STATE_VECTOR 3
+#define VEL_STATE_VECTOR 2
+#define INPUT_FILE "input_odp.txt"
+#define OUTPUT_FILE "odp_output.txt"
+
+// Define types
+#define uint8_t unsigned char
+#define uint16_t unsigned short
+
+/* --- ICD-3 Odp--- */
+#pragma pack(push, 1)
+typedef struct {
+    double lOdp_Pos[POS_STATE_VECTOR];
+    float fOdp_Val[VEL_STATE_VECTOR];
+    float fEst_CLK_Bias[2];
+    uint8_t ucValidationFlag_Sts[14];
+    uint16_t usSps_Upd_Ctr;
+    uint16_t usUart_Tr_Ctr;
+    uint16_t usUart_Rec_Ctr;
+    uint8_t ucUart_Cksum_Fctr;
+    uint8_t ucI2C_Tc_Rec_Ctr;
+    uint8_t ucTC_Ctr;
+    uint8_t ucTc_Upd_Ctr;
+    uint8_t ucAstr_Rst_Ctr;
+    uint8_t ucSam_Rst_Ctr;
+    uint8_t ucSps_Rst_Ctr;
+    uint8_t ucRst_Id;
+    uint8_t ucSam_Hlth_DebInfo[8];
+} StOdp;
+#pragma pack(pop)
+
+void convert_odp_data(void) {
+    FILE *fp_in = fopen(INPUT_FILE, "rt");
+    FILE *fp_out = fopen(OUTPUT_FILE, "w");
+    
+    if (!fp_out) { 
+        printf("Error opening output file\n"); 
+        return; 
+    }
+    if (!fp_in) { 
+        printf("Error opening input file %s\n", INPUT_FILE); 
+        return; 
+    }
+    
+    StOdp odp;
+    char line[256];
+    int line_count = 0;
+    
+    printf("Processing input file...\n");
+    fprintf(fp_out, "ODP Data Conversion Results:\n");
+    fprintf(fp_out, "============================\n\n");
+
+    while (fgets(line, sizeof(line), fp_in)) {
+        line_count++;
+        
+        // Initialize entire structure to 0x00
+        memset(&odp, 0x00, sizeof(StOdp));
+        
+        // Parse only the required fields from input line
+        int parsed = sscanf(line,
+            "%lf %lf %lf "  // lOdp_Pos[3]
+            "%f %f "        // fOdp_Val[2]
+            "%f %f "        // fEst_CLK_Bias[2]
+            "%hhu %hhu %hhu %hhu %hhu %hhu %hhu %hhu %hhu %hhu %hhu %hhu %hhu %hhu",  // ucValidationFlag_Sts[14]
+            &odp.lOdp_Pos[0], &odp.lOdp_Pos[1], &odp.lOdp_Pos[2],
+            &odp.fOdp_Val[0], &odp.fOdp_Val[1],
+            &odp.fEst_CLK_Bias[0], &odp.fEst_CLK_Bias[1],
+            &odp.ucValidationFlag_Sts[0], &odp.ucValidationFlag_Sts[1], &odp.ucValidationFlag_Sts[2],
+            &odp.ucValidationFlag_Sts[3], &odp.ucValidationFlag_Sts[4], &odp.ucValidationFlag_Sts[5],
+            &odp.ucValidationFlag_Sts[6], &odp.ucValidationFlag_Sts[7], &odp.ucValidationFlag_Sts[8],
+            &odp.ucValidationFlag_Sts[9], &odp.ucValidationFlag_Sts[10], &odp.ucValidationFlag_Sts[11],
+            &odp.ucValidationFlag_Sts[12], &odp.ucValidationFlag_Sts[13]);
+
+        // If we didn't get all validation flags, that's OK - rest remain 0x00
+        if (parsed < 7) { // At least need the first 7 values
+            printf("Warning: Line %d has insufficient data (%d values parsed)\n", line_count, parsed);
+            continue;
+        }
+
+        // Convert to hex and write to output
+        unsigned char *bytes = (unsigned char *)&odp;
+        size_t struct_size = sizeof(StOdp);
+        
+        fprintf(fp_out, "Line %d - Hex output (%zu bytes):\n", line_count, struct_size);
+        
+        for (size_t i = 0; i < struct_size; i++) {
+            fprintf(fp_out, "%02X", bytes[i]);
+            if ((i + 1) % 16 == 0) fprintf(fp_out, "\n");
+            else if ((i + 1) % 4 == 0) fprintf(fp_out, " ");
+        }
+        fprintf(fp_out, "\n\n");
+    }
+
+    fclose(fp_in);
+    fclose(fp_out);
+    
+    printf("Conversion completed. Output written to %s\n", OUTPUT_FILE);
+    printf("Total lines processed: %d\n", line_count);
+}
+
+void print_structure_info(void) {
+    printf("StOdp structure information:\n");
+    printf("Total size: %zu bytes\n", sizeof(StOdp));
+    printf("Fields that will be read from input:\n");
+    printf("  lOdp_Pos[3] (24 bytes)\n");
+    printf("  fOdp_Val[2] (8 bytes)\n");
+    printf("  fEst_CLK_Bias[2] (8 bytes)\n");
+    printf("  ucValidationFlag_Sts[14] (14 bytes)\n");
+    printf("All other fields will be set to 0x00\n");
+}
+
+int main(void) {
+    print_structure_info();
+    convert_odp_data();
+    return 0;
+}
+
+
+//odp code 3
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+
+#define POS_STATE_VECTOR 3
+#define VEL_STATE_VECTOR 2
+#define INPUT_FILE "input_odp.txt"
+#define OUTPUT_FILE "odp_output.txt"
+
+#define uint8_t unsigned char
+#define uint16_t unsigned short
+
+#pragma pack(push, 1)
+typedef struct {
+    double lOdp_Pos[POS_STATE_VECTOR];
+    float fOdp_Val[VEL_STATE_VECTOR];
+    float fEst_CLK_Bias[2];
+    uint8_t ucValidationFlag_Sts[14];
+    // Rest will be zeros
+    uint8_t zeros[46]; // Remaining 46 bytes set to 0x00
+} StOdpPartial;
+#pragma pack(pop)
+
+void convert_odp_efficient(void) {
+    FILE *fp_in = fopen(INPUT_FILE, "rt");
+    FILE *fp_out = fopen(OUTPUT_FILE, "wb"); // Binary mode for direct hex writing
+    
+    if (!fp_out || !fp_in) {
+        printf("File open error\n");
+        if (fp_in) fclose(fp_in);
+        if (fp_out) fclose(fp_out);
+        return;
+    }
+    
+    StOdpPartial odp;
+    char line[256];
+    
+    while (fgets(line, sizeof(line), fp_in)) {
+        // Initialize to zeros
+        memset(&odp, 0x00, sizeof(StOdpPartial));
+        
+        // Parse only what we need
+        sscanf(line,
+            "%lf %lf %lf %f %f %f %f"
+            "%hhu %hhu %hhu %hhu %hhu %hhu %hhu"
+            "%hhu %hhu %hhu %hhu %hhu %hhu %hhu",
+            &odp.lOdp_Pos[0], &odp.lOdp_Pos[1], &odp.lOdp_Pos[2],
+            &odp.fOdp_Val[0], &odp.fOdp_Val[1],
+            &odp.fEst_CLK_Bias[0], &odp.fEst_CLK_Bias[1],
+            &odp.ucValidationFlag_Sts[0], &odp.ucValidationFlag_Sts[1], &odp.ucValidationFlag_Sts[2],
+            &odp.ucValidationFlag_Sts[3], &odp.ucValidationFlag_Sts[4], &odp.ucValidationFlag_Sts[5],
+            &odp.ucValidationFlag_Sts[6], &odp.ucValidationFlag_Sts[7], &odp.ucValidationFlag_Sts[8],
+            &odp.ucValidationFlag_Sts[9], &odp.ucValidationFlag_Sts[10], &odp.ucValidationFlag_Sts[11],
+            &odp.ucValidationFlag_Sts[12], &odp.ucValidationFlag_Sts[13]);
+        
+        // Write binary data directly
+        fwrite(&odp, sizeof(StOdpPartial), 1, fp_out);
+    }
+    
+    fclose(fp_in);
+    fclose(fp_out);
+    printf("Binary conversion completed.\n");
+}
+
+int main(void) {
+    printf("ODP Data Converter - Most Efficient Version\n");
+    printf("Reading: 3 doubles + 2 floats + 2 floats + 14 bytes\n");
+    printf("All other fields set to 0x00\n");
+    
+    convert_odp_efficient();
     return 0;
 }
