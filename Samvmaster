@@ -1,0 +1,217 @@
+SAMV71 I2C Master Implementation at 350Hz with MPLAB Setup
+
+I'll guide you through creating a complete MPLAB project for SAMV71 I2C master implementation at 350Hz.
+
+Step 1: Create a New MPLAB X Project
+
+1. Open MPLAB X IDE
+2. Click File → New Project
+3. Select "Microchip Embedded" → "Standalone Project"
+4. Choose device: ATSAMV71Q21B
+5. Select your hardware tool (e.g., SAMV71 Xplained Ultra)
+6. Choose compiler: XC32 (v2.xx or later)
+7. Click Finish
+
+Step 2: Configure Clock and Peripherals
+
+Create a configuration.h file:
+
+```c
+#ifndef CONFIGURATION_H
+#define CONFIGURATION_H
+
+// Clock configuration
+#define F_CPU 300000000UL  // CPU frequency: 300 MHz
+#define I2C_FREQ 350       // Desired I2C frequency: 350 Hz
+
+// I2C Pin configuration for SAMV71 Xplained Ultra
+#define I2C_MASTER_MODULE      TWIHS1
+#define I2C_MASTER_SERCOM_PAD0 PIN_PA3  // SDA
+#define I2C_MASTER_SERCOM_PAD1 PIN_PA4  // SCL
+
+// I2C Addresses
+#define I2C_SLAVE_ADDR 0x54  // Example slave address
+
+#endif /* CONFIGURATION_H */
+```
+
+Step 3: Implement I2C Master Code
+
+Create a main.c file:
+
+```c
+#include <sam.h>
+#include "configuration.h"
+
+// Function prototypes
+void system_init(void);
+void i2c_master_init(void);
+void i2c_master_write(uint8_t slave_addr, uint8_t reg_addr, uint8_t data);
+uint8_t i2c_master_read(uint8_t slave_addr, uint8_t reg_addr);
+void delay_ms(uint32_t ms);
+
+int main(void) {
+    system_init();
+    i2c_master_init();
+    
+    while (1) {
+        // Example: Write then read from an I2C device
+        i2c_master_write(I2C_SLAVE_ADDR, 0x00, 0xAB);
+        delay_ms(10);
+        
+        uint8_t value = i2c_master_read(I2C_SLAVE_ADDR, 0x00);
+        delay_ms(1000);  // Wait 1 second between transactions
+    }
+}
+
+void system_init(void) {
+    // Disable watchdog
+    WDT->WDT_MR = WDT_MR_WDDIS;
+    
+    // Initialize main clock to 300 MHz
+    // (Your specific clock configuration code here)
+    
+    // Enable peripheral clocks
+    PMC->PMC_PCER0 = (1 << ID_TWIHS1);
+}
+
+void i2c_master_init(void) {
+    // Enable peripheral clock for TWIHS1
+    PMC->PMC_PCER0 = (1 << ID_TWIHS1);
+    
+    // Reset TWIHS1
+    TWIHS1->TWIHS_CR = TWIHS_CR_SWRST;
+    
+    // Configure I2C pins (SDA and SCL)
+    // Note: This is pin-specific to your board - adjust as needed
+    PIOA->PIO_PDR = PIO_PA3 | PIO_PA4;  // Disable PIO control
+    PIOA->PIO_ABSR &= ~(PIO_PA3 | PIO_PA4); // Select peripheral A
+    PIOA->PIO_PUER = PIO_PA3 | PIO_PA4;  // Enable pull-ups
+    
+    // Calculate clock divider for 350Hz
+    // TWIHS_CWGR = (CKDIV * 256) + (CHDIV * 16) + CLDIV
+    // T_low = (CLDIV * 2 + 3) * T_mck
+    // T_high = (CHDIV * 2 + 4) * T_mck * (2^CKDIV)
+    uint32_t mck = F_CPU;
+    uint32_t freq = I2C_FREQ;
+    
+    // For very low frequencies, we need to use a large divider
+    uint32_t clock_divider = (mck / (2 * freq)) - 4;
+    
+    // Configure TWIHS for master mode
+    TWIHS1->TWIHS_CR = TWIHS_CR_MSEN;  // Master mode enabled
+    TWIHS1->TWIHS_CWGR = TWIHS_CWGR_CKDIV(7) |  // Maximum clock division
+                         TWIHS_CWGR_CHDIV(clock_divider) |
+                         TWIHS_CWGR_CLDIV(clock_divider);
+}
+
+void i2c_master_write(uint8_t slave_addr, uint8_t reg_addr, uint8_t data) {
+    // Send start condition
+    TWIHS1->TWIHS_CR = TWIHS_CR_START;
+    
+    // Wait until start condition sent
+    while (!(TWIHS1->TWIHS_SR & TWIHS_SR_TXCOMP));
+    
+    // Send slave address with write flag
+    TWIHS1->TWIHS_MMR = TWIHS_MMR_DADR(slave_addr) | TWIHS_MMR_MREAD;
+    
+    // Send register address
+    TWIHS1->TWIHS_THR = reg_addr;
+    
+    // Wait until data sent
+    while (!(TWIHS1->TWIHS_SR & TWIHS_SR_TXRDY));
+    
+    // Send data
+    TWIHS1->TWIHS_THR = data;
+    
+    // Wait until data sent
+    while (!(TWIHS1->TWIHS_SR & TWIHS_SR_TXRDY));
+    
+    // Send stop condition
+    TWIHS1->TWIHS_CR = TWIHS_CR_STOP;
+    
+    // Wait until stop condition sent
+    while (!(TWIHS1->TWIHS_SR & TWIHS_SR_TXCOMP));
+}
+
+uint8_t i2c_master_read(uint8_t slave_addr, uint8_t reg_addr) {
+    uint8_t data = 0;
+    
+    // First, write the register address we want to read from
+    // Send start condition
+    TWIHS1->TWIHS_CR = TWIHS_CR_START;
+    
+    // Wait until start condition sent
+    while (!(TWIHS1->TWIHS_SR & TWIHS_SR_TXCOMP));
+    
+    // Send slave address with write flag
+    TWIHS1->TWIHS_MMR = TWIHS_MMR_DADR(slave_addr);
+    
+    // Send register address
+    TWIHS1->TWIHS_THR = reg_addr;
+    
+    // Wait until data sent
+    while (!(TWIHS1->TWIHS_SR & TWIHS_SR_TXRDY));
+    
+    // Now, read from the register
+    // Send repeated start condition
+    TWIHS1->TWIHS_CR = TWIHS_CR_START;
+    
+    // Wait until start condition sent
+    while (!(TWIHS1->TWIHS_SR & TWIHS_SR_TXCOMP));
+    
+    // Send slave address with read flag
+    TWIHS1->TWIHS_MMR = TWIHS_MMR_DADR(slave_addr) | TWIHS_MMR_MREAD;
+    
+    // Prepare to receive data
+    TWIHS1->TWIHS_CR = TWIHS_CR_START;
+    
+    // Wait until data received
+    while (!(TWIHS1->TWIHS_SR & TWIHS_SR_RXRDY));
+    
+    // Read data
+    data = TWIHS1->TWIHS_RHR;
+    
+    // Send stop condition
+    TWIHS1->TWIHS_CR = TWIHS_CR_STOP;
+    
+    // Wait until stop condition sent
+    while (!(TWIHS1->TWIHS_SR & TWIHS_SR_TXCOMP));
+    
+    return data;
+}
+
+void delay_ms(uint32_t ms) {
+    // Simple delay function - adjust based on your clock
+    for (uint32_t i = 0; i < (ms * 1000); i++) {
+        __NOP();
+    }
+}
+```
+
+Step 4: Configure Project Properties
+
+1. Right-click on your project → Properties
+2. Under "Conf: [default]" → XC32 (Global Options)
+   · Set optimization level to -O1
+   · Ensure "Processor" is set to ATSAMV71Q21B
+3. Under XC32 Linker
+   · Add any necessary libraries
+   · Set heap and stack size if needed
+
+Step 5: Build and Program
+
+1. Click the "Clean and Build" button (hammer icon)
+2. Fix any compilation errors
+3. Connect your hardware
+4. Click "Make and Program Device" (lightning bolt icon)
+
+Important Notes:
+
+1. Clock Configuration: The actual clock initialization code depends on your specific board and oscillator configuration. You may need to implement a proper clock initialization routine.
+2. Pin Configuration: The pin configuration (PIOA->PIO_ABSR, etc.) is specific to the SAMV71 Xplained Ultra board. Adjust according to your hardware.
+3. Low Frequency Operation: 350Hz is an unusually low frequency for I2C. The implementation uses the maximum clock divider to achieve this low frequency.
+4. Pull-up Resistors: Ensure your hardware has appropriate pull-up resistors on the SDA and SCL lines (typically 4.7kΩ).
+5. Error Handling: For a production system, you should add proper error handling and status checking.
+
+This implementation provides a basic I2C master operating at approximately 350Hz. You may need to adjust the clock divider values based on your exact clock configuration and requirements.
