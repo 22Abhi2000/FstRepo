@@ -1,0 +1,256 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#define BUFFER_SIZE 1800
+#define TX_Buffer_size 1800
+#define NUM_GPS_CHANNEL 16
+typedef unsigned char uint8_t;
+typedef unsigned short uint16_t;
+typedef unsigned int uint32_t;
+
+#pragma pack(push,1)
+typedef struct {
+    uint16_t header;
+    uint8_t msmt_counter;
+    uint8_t nav_state;
+    uint8_t antenna_status;
+    uint8_t pvt_status;
+    uint8_t gps_nav_sats;
+    uint8_t navic_sats;
+    uint16_t GPS_MK_Num;
+    double IDGps_Tow;
+    double IDRec_Pos[3];
+    float IDRec_Vel[3];
+    float IDGdop_odopt[2];
+    uint16_t Dlt_time[2];
+    uint16_t Checksum;
+    uint16_t Nav_Week_Num;
+    double IDNav_Tow;
+    uint8_t Type_22_Data[37];
+    uint8_t Sv_status[16];
+    uint8_t Sv_id[16];
+    uint8_t Cndr[16];
+    double IDPR[16];
+    double IDDR[16];
+    double IDCR[16];
+    double IDBias;
+    double IDDrift;
+    uint8_t Ephemeris[71];
+    uint16_t Msg_Rec_ctr;
+    uint8_t Debug_info[22];
+    uint8_t SV_ID[14];
+    uint8_t CNDR[14];
+    double IDPseudo_Range[4];
+    double IDDelta_Range[4];
+    double IDGPSSV_Pos[NUM_GPS_CHANNEL][7];
+    uint8_t Elevation[NUM_GPS_CHANNEL];
+    uint16_t Azimuth[NUM_GPS_CHANNEL];
+    uint16_t Uart_Tx_ctr;
+    uint8_t Ast_Rst_ctr;
+    uint8_t Ast_Rst_id;
+    uint8_t Ast_Debug[100];
+    uint16_t Checksum1;
+} GPSPacketInp;
+
+#pragma pack(pop)
+
+// Create a global file pointer for output
+FILE *global_fout = NULL;
+
+void print_GPSPacketInp(const GPSPacketInp *p) {
+    // Print to console
+    printf("\n");
+    printf("header: 0x%04x\n", p->header);
+    printf("msmt_counter: %u\n", p->msmt_counter);
+    printf("nav_state: %u\n", p->nav_state);
+    printf("antenna_status: %u\n", p->antenna_status);
+    printf("pvt_status: %u\n", p->pvt_status);
+    printf("gps_nav_sats: %u\n", p->gps_nav_sats);
+    printf("navic_sats: %u\n", p->navic_sats);
+    printf("GPS_MK_Num: %u\n", p->GPS_MK_Num);
+    printf("IDGps_Tow: %1f\n", p->IDGps_Tow);
+    printf("\n");
+    for (int i = 0; i < 2 ; i++)
+    printf("%d: %u\n", i, p->Dlt_time[i]);
+
+    printf(" \tsps\tposition \t velocity \n");
+    for (int i = 0; i < 3; i++)
+    printf("%d:\t %1f \t %f \n", i, p->IDRec_Pos[i],p->IDRec_Vel[i]);
+    printf("\n");
+    for (int i = 0; i < 16; i++)
+    printf("%u %u %u", i, p->Sv_status[i],p->Cndr[i]);
+    printf("\n\n");
+    for (int i = 0; i < 16; i++)
+    printf("Cndr(%d): %u ", i, p->Cndr[i]);
+    printf("\n\n");
+    for (int i = 0; i < 16; i++)
+    printf("IDPR(%d): %1f\n", i, p->IDPR[i]);
+    printf("\n\n");
+    for (int i = 0; i < 16; i++)
+    printf("IDDR(%d): %1f\n", i, p->IDDR[i]);
+    printf("\n\n");
+    for (int i = 0; i < 16; i++)
+    printf("IDCR(%d): %1f\n", i, p->IDCR[i]);
+    printf("\n\n");
+    printf("IDBias: %1f\n", p->IDBias);
+    printf("IDDrift: %1f\n", p->IDDrift);
+    for (int i = 0; i < 71; i++)
+    printf("Ephemeris(%d): %u\n", i, p->Ephemeris[i]);
+    printf("Msg_Rec_ctr: %u\n", p->Msg_Rec_ctr);
+    for (int i = 0; i < 22; i++)
+    printf("Debug_info(%d): %u\n", i, p->Debug_info[i]);
+    for (int i = 0; i < 14; i++)
+    printf("SV_ID(%d): %u\n", i, p->SV_ID[i]);
+    for (int i = 0; i < 14; i++)
+    printf("CNDR(%d): %u\n", i, p->CNDR[i]);
+    for (int i = 0; i < 4; i++)
+    printf("IDPseudo_Range[%d]: %lf\n", i, p->IDPseudo_Range[i]);
+    for (int i = 0; i < 4; i++)
+    printf("IDDelta_Range[%d]: %lf\n", i, p->IDDelta_Range[i]);
+    for (int i = 0; i < NUM_GPS_CHANNEL; i++)
+    for (int j = 0; j < 7; j++)
+    printf("IDGPSSV_Pos[%d][%d]: %lf\n", i, j, p->IDGPSSV_Pos[i][j]);
+    for (int i = 0; i < NUM_GPS_CHANNEL; i++)
+    printf("Elevation[%d]: %u\n", i, p->Elevation[i]);
+    for (int i = 0; i < NUM_GPS_CHANNEL; i++)
+    printf("Azimuth[%d]: %u\n", i, p->Azimuth[i]);
+    printf("Uart_Tx_ctr: %u\n", p->Uart_Tx_ctr);
+    printf("Ast_Rst_ctr: %u\n", p->Ast_Rst_ctr);
+    printf("Ast_Rst_id: %u\n", p->Ast_Rst_id);
+    for (int i = 0; i < 100; i++)
+    printf("Ast_Debug[%d]: %u\n", i, p->Ast_Debug[i]);
+    printf("Checksum1: %u\n", p->Checksum1);
+    printf("\n\n");
+
+    // Also print to file if file is open
+    if (global_fout != NULL) {
+        fprintf(global_fout, "\n");
+        fprintf(global_fout, "header: 0x%04x\n", p->header);
+        fprintf(global_fout, "msmt_counter: %u\n", p->msmt_counter);
+        fprintf(global_fout, "nav_state: %u\n", p->nav_state);
+        fprintf(global_fout, "antenna_status: %u\n", p->antenna_status);
+        fprintf(global_fout, "pvt_status: %u\n", p->pvt_status);
+        fprintf(global_fout, "gps_nav_sats: %u\n", p->gps_nav_sats);
+        fprintf(global_fout, "navic_sats: %u\n", p->navic_sats);
+        fprintf(global_fout, "GPS_MK_Num: %u\n", p->GPS_MK_Num);
+        fprintf(global_fout, "IDGps_Tow: %1f\n", p->IDGps_Tow);
+        fprintf(global_fout, "\n");
+        for (int i = 0; i < 2 ; i++)
+        fprintf(global_fout, "%d: %u\n", i, p->Dlt_time[i]);
+
+        fprintf(global_fout, " \tsps\tposition \t velocity \n");
+        for (int i = 0; i < 3; i++)
+        fprintf(global_fout, "%d:\t %1f \t %f \n", i, p->IDRec_Pos[i],p->IDRec_Vel[i]);
+        fprintf(global_fout, "\n");
+        for (int i = 0; i < 16; i++)
+        fprintf(global_fout, "%u %u %u", i, p->Sv_status[i],p->Cndr[i]);
+        fprintf(global_fout, "\n\n");
+        for (int i = 0; i < 16; i++)
+        fprintf(global_fout, "Cndr(%d): %u ", i, p->Cndr[i]);
+        fprintf(global_fout, "\n\n");
+        for (int i = 0; i < 16; i++)
+        fprintf(global_fout, "IDPR(%d): %1f\n", i, p->IDPR[i]);
+        fprintf(global_fout, "\n\n");
+        for (int i = 0; i < 16; i++)
+        fprintf(global_fout, "IDDR(%d): %1f\n", i, p->IDDR[i]);
+        fprintf(global_fout, "\n\n");
+        for (int i = 0; i < 16; i++)
+        fprintf(global_fout, "IDCR(%d): %1f\n", i, p->IDCR[i]);
+        fprintf(global_fout, "\n\n");
+        fprintf(global_fout, "IDBias: %1f\n", p->IDBias);
+        fprintf(global_fout, "IDDrift: %1f\n", p->IDDrift);
+        for (int i = 0; i < 71; i++)
+        fprintf(global_fout, "Ephemeris(%d): %u\n", i, p->Ephemeris[i]);
+        fprintf(global_fout, "Msg_Rec_ctr: %u\n", p->Msg_Rec_ctr);
+        for (int i = 0; i < 22; i++)
+        fprintf(global_fout, "Debug_info(%d): %u\n", i, p->Debug_info[i]);
+        for (int i = 0; i < 14; i++)
+        fprintf(global_fout, "SV_ID(%d): %u\n", i, p->SV_ID[i]);
+        for (int i = 0; i < 14; i++)
+        fprintf(global_fout, "CNDR(%d): %u\n", i, p->CNDR[i]);
+        for (int i = 0; i < 4; i++)
+        fprintf(global_fout, "IDPseudo_Range[%d]: %lf\n", i, p->IDPseudo_Range[i]);
+        for (int i = 0; i < 4; i++)
+        fprintf(global_fout, "IDDelta_Range[%d]: %lf\n", i, p->IDDelta_Range[i]);
+        for (int i = 0; i < NUM_GPS_CHANNEL; i++)
+        for (int j = 0; j < 7; j++)
+        fprintf(global_fout, "IDGPSSV_Pos[%d][%d]: %lf\n", i, j, p->IDGPSSV_Pos[i][j]);
+        for (int i = 0; i < NUM_GPS_CHANNEL; i++)
+        fprintf(global_fout, "Elevation[%d]: %u\n", i, p->Elevation[i]);
+        for (int i = 0; i < NUM_GPS_CHANNEL; i++)
+        fprintf(global_fout, "Azimuth[%d]: %u\n", i, p->Azimuth[i]);
+        fprintf(global_fout, "Uart_Tx_ctr: %u\n", p->Uart_Tx_ctr);
+        fprintf(global_fout, "Ast_Rst_ctr: %u\n", p->Ast_Rst_ctr);
+        fprintf(global_fout, "Ast_Rst_id: %u\n", p->Ast_Rst_id);
+        for (int i = 0; i < 100; i++)
+        fprintf(global_fout, "Ast_Debug[%d]: %u\n", i, p->Ast_Debug[i]);
+        fprintf(global_fout, "Checksum1: %u\n", p->Checksum1);
+        fprintf(global_fout, "\n\n");
+    }
+}
+
+int main() {
+    char filename[260];
+    printf("Enter input file name: ");
+    scanf("%s", filename); // user types the file name
+
+    FILE *fin = fopen(filename, "rt+");
+    if (!fin) {
+        printf("Error opening input file\n");
+        return -1;
+    }
+
+    FILE *fout = fopen("1.txt", "wt");
+    if (!fout) {
+        printf("Error opening output file\n");
+        fclose(fin);
+        return -1;
+    }
+
+    // Set global file pointer for output
+    global_fout = fout;
+
+    unsigned char buffer[TX_Buffer_size];
+    memset(buffer, 0, sizeof(buffer));
+
+    GPSPacketInp packet;
+    memset(&packet, 0, sizeof(packet));
+
+    // Read the file line by line until EOF
+    while (!feof(fin)) {
+        // Read a line of hex data from the file
+        int i = 0;
+        while (i < TX_Buffer_size) {
+            unsigned int byte;
+            int result = fscanf(fin, "%02x", &byte);
+            if (result == 1) {
+                buffer[i] = (unsigned char)byte;
+                i++;
+            } else {
+                // Break when we reach the end of the line or file
+                break;
+            }
+        }
+
+        // Check if we have any data to process
+        if (i > 0) {
+            // Write raw hex data to file (your existing logic)
+            for (int j = 0; j < i; j++) {
+                fprintf(fout, "%02X ", buffer[j]);
+            }
+            fprintf(fout, "\t");
+
+            // Copy the buffer to packet structure
+            memcpy(&packet, buffer, sizeof(GPSPacketInp));
+            
+            // Print the packet (this will now print to both console and file)
+            print_GPSPacketInp(&packet);
+        }
+    }
+
+    fclose(fin);
+    fclose(fout);
+    global_fout = NULL; // Reset global pointer
+
+    return 0;
+}
