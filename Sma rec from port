@@ -1,0 +1,289 @@
+What I'm going to do:
+
+I'll modify the code to:
+
+1. Remove all transmission logic - no more sending data to COM port
+2. Set up continuous reception - receive data from COM17 every ~8ms
+3. Use serial port events/interrupts to detect when data is available
+4. Process GPS navigation data including:
+   · Satellite positions and velocities
+   · GPS time (TOW)
+   · Receiver clock bias and drift
+   · Satellite measurements (pseudo-range, Doppler, carrier)
+   · Ephemeris data
+5. Log engineering data to output files:
+   · "outputodp.dat" - raw received ODP data
+   · "odpEngg.dat" - processed engineering data
+
+The code will run in a loop, waiting for data to arrive on the serial port and processing it immediately when available.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <windows.h>
+#include <conio.h>
+#include <time.h>
+#include <stdint.h>
+
+#define COM_PORT "COM17"
+#define BAUD_RATE CBR_115200
+#define TOTAL_BYTES 1800
+#define ODP_BYTES 128
+#define RECEIVE_BUFFER_SIZE TOTAL_BYTES+ODP_BYTES
+#define uint8_t unsigned char
+#define uint16_t unsigned short
+#define int64_t long long
+#define uint64_t unsigned long long
+#define Num_chn 16
+#define POS_STATE_VECTOR 3
+#define VEL_STATE_VECTOR 3
+#define MAX_ORBIT_CLKPAR 7
+#define Type22_data_length1 37
+#define MAX_GPS_SAT1 16
+#define MAX_NAV_SAT1 14
+#define MAX_NAV_SAT2 4
+
+double lstate[6] = {0};
+double IGPSstate[Num_chn][6] = {0};
+
+FILE *fp3, *ODPfile4;
+unsigned int Frame_ctr = 0;
+long long temp_val1 = 0;
+double ltemp_val1 = 0;
+unsigned char temp_arr[8];
+
+typedef struct {
+    double IEstimate;
+} stEpoch;
+
+stEpoch lstEpoch;
+
+#pragma pack(push, 1)
+typedef struct {
+    uint16_t usUart_Hdr;
+    uint8_t ucMsmt_Ctr;
+    uint8_t ucNav_State;
+    uint8_t ucAnt_Sts;
+    uint8_t ucPVT_Ava_Sts;
+    uint8_t ucGPS_Sat;
+    uint8_t ucNAV_Sat;
+    uint16_t usGPS_WeekNo;
+    double IGPS_TimeOfWeek;
+    double lLeoSvPos[POS_STATE_VECTOR];
+    float fLeoSvVe[VEL_STATE_VECTOR];
+    float fGdop;
+    float fPdop;
+    float fDelta_Time;
+    uint16_t usChksum;
+    uint16_t usNAV_WeekNo;
+    double INAV_TimeOfWeek;
+    uint8_t ucType22_data[Type22_data_length1];
+    uint8_t ucGPS_SV_StsLBI[MAX_GPS_SAT1];
+    uint8_t ucGPS_SVID[MAX_GPS_SAT1];
+    uint8_t ucGPS_Cndr[MAX_GPS_SAT1];
+    double lGPS_MeasCode[MAX_GPS_SAT1];
+    double lGPS_MeasDoppler[MAX_GPS_SAT1];
+    double lGPS_MeasCarrier[MAX_GPS_SAT1];
+    double lGPS_Rec_Clk_bias;
+    double lGPS_Rec_Clk_drift;
+    uint8_t ucEphemeris_SVID_Data[71];
+    uint16_t usMSg_Rec_Ctr;
+    uint8_t ucAST_Debug_info[22];
+    uint8_t ucNAV_SVID[MAX_NAV_SAT1];
+    uint8_t ucNAV_Cndr[MAX_NAV_SAT1];
+    double INAV_MeasCode[MAX_NAV_SAT2];
+    double INAV_MeasDoppler[MAX_NAV_SAT2];
+    double lGpsSv[MAX_GPS_SAT1][MAX_ORBIT_CLKPAR];
+    int8_t iGPS_Elevation[MAX_GPS_SAT1];
+    int16_t iGPS_Azimuth[MAX_GPS_SAT1];
+    uint16_t usLat_ASTTx_Ctr;
+    uint8_t ucAST_RST_Ctr;
+    uint8_t ucAST_RST_ID;
+    uint8_t ucGPS_SV_StsMBI[MAX_GPS_SAT1];
+    uint16_t usNAV_SV_Sts[MAX_NAV_SAT1];
+    double INAV_Rec_Clk_bias;
+    double INAV_Rec_Clk_drift;
+    uint8_t ucAST_Debug_Spare[40];
+    uint16_t usTotal_Chksum;
+} SEpochData_UART1;
+#pragma pack(pop)
+
+SEpochData_UART1 SEpochData_UART_RX1;
+
+double getdoublefrom8bytes(const uint8_t *temp_arr1) {
+    return ((int64_t)((uint64_t)temp_arr1[0] << 0) | 
+           (int64_t)((uint64_t)temp_arr1[1] << 8) | 
+           (int64_t)((uint64_t)temp_arr1[2] << 16) | 
+           (int64_t)((uint64_t)temp_arr1[3] << 24) | 
+           (int64_t)((uint64_t)temp_arr1[4] << 32) | 
+           (int64_t)((uint64_t)temp_arr1[5] << 40) | 
+           (int64_t)((uint64_t)temp_arr1[6] << 48) | 
+           (int64_t)((uint64_t)temp_arr1[7] << 56));
+}
+
+int main() {
+    HANDLE hSerial;
+    DCB dcbSerialParams = {0};
+    COMMTIMEOUTS timeouts = {0};
+    DWORD bytesRead;
+    BOOL readStatus;
+    unsigned char receiveBuffer[RECEIVE_BUFFER_SIZE] = {0};
+
+    fp3 = fopen("outputodp.dat", "wt+");
+    ODPfile4 = fopen("odpEngg.dat", "wt+");
+    
+    printf("GPS Data Reception Program\n");
+    printf("Receiving from %s at %d baud\n", COM_PORT, BAUD_RATE);
+
+    hSerial = CreateFile(
+        "\\\\.\\COM17",
+        GENERIC_READ,
+        0,
+        NULL,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        NULL);
+
+    if (hSerial == INVALID_HANDLE_VALUE) {
+        printf("Error opening serial port! Error code: %d\n", GetLastError());
+        return 1;
+    }
+
+    dcbSerialParams.DCBlength = sizeof(dcbSerialParams);
+
+    if (!GetCommState(hSerial, &dcbSerialParams)) {
+        printf("Error getting device state. Error code: %d\n", GetLastError());
+        CloseHandle(hSerial);
+        return 1;
+    }
+
+    dcbSerialParams.BaudRate = BAUD_RATE;
+    dcbSerialParams.ByteSize = 8;
+    dcbSerialParams.StopBits = ONESTOPBIT;
+    dcbSerialParams.Parity = NOPARITY;
+    dcbSerialParams.fOutxCtsFlow = FALSE;
+    dcbSerialParams.fRtsControl = RTS_CONTROL_DISABLE;
+    dcbSerialParams.fOutX = FALSE;
+    dcbSerialParams.fInX = FALSE;
+
+    if (!SetCommState(hSerial, &dcbSerialParams)) {
+        printf("Error setting device parameters. Error code: %d\n", GetLastError());
+        CloseHandle(hSerial);
+        return 1;
+    }
+
+    timeouts.ReadIntervalTimeout = 8;
+    timeouts.ReadTotalTimeoutConstant = 8;
+    timeouts.ReadTotalTimeoutMultiplier = 0;
+    timeouts.WriteTotalTimeoutConstant = 0;
+    timeouts.WriteTotalTimeoutMultiplier = 0;
+
+    if (!SetCommTimeouts(hSerial, &timeouts)) {
+        printf("Error setting timeouts. Error code: %d\n", GetLastError());
+        CloseHandle(hSerial);
+        return 1;
+    }
+
+    if (!PurgeComm(hSerial, PURGE_RXCLEAR | PURGE_TXCLEAR)) {
+        printf("Error flushing port: %d\n", GetLastError());
+    } else {
+        printf("Successfully flushed serial buffers\n");
+    }
+
+    printf("Beginning reception...\n");
+    
+    while (1) {
+        readStatus = ReadFile(
+            hSerial,
+            receiveBuffer,
+            RECEIVE_BUFFER_SIZE,
+            &bytesRead,
+            NULL);
+
+        if (readStatus && bytesRead > 0) {
+            Frame_ctr++;
+            printf("Successfully received %d bytes (Frame: %d)\n", bytesRead, Frame_ctr);
+
+            for (DWORD j = 0; j < bytesRead; j++) {
+                fprintf(fp3, " 0x%02X \t", (unsigned char)receiveBuffer[j]);
+                if (j > 1797) {
+                    fprintf(fp3, " 0x%02X \t", (unsigned char)receiveBuffer[j]);
+                }
+            }
+            fprintf(fp3, "\n");
+
+            memcpy(&SEpochData_UART_RX1, receiveBuffer, sizeof(SEpochData_UART_RX1));
+
+            printf("ODP Flag: %0d \t ", (unsigned char)receiveBuffer[1798]);
+            temp_val1 = ((unsigned short)receiveBuffer[1800] << 8) | receiveBuffer[1799];
+            printf("ODP VN: %02X %02X \t ", (unsigned char)receiveBuffer[1799], (unsigned char)receiveBuffer[1800]);
+
+            fprintf(ODPfile4, "\n %4d \t ", (unsigned short)temp_val1);
+            printf("Num sat: %0d \t ", (unsigned char)receiveBuffer[1809]);
+            
+            unsigned char ucindx = 0, ucindx1 = 0;
+            for (ucindx = 0; ucindx < 8; ucindx++) {
+                temp_arr[ucindx] = receiveBuffer[1801 + ucindx];
+            }
+
+            temp_val1 = 0;
+            memcpy(&temp_val1, &temp_arr, sizeof(temp_val1));
+            printf(" TOW: %lf", temp_val1 / 1e+6);
+            fprintf(ODPfile4, " %lf", temp_val1 / 1e+6);
+            fprintf(ODPfile4, " %0d \t ", (unsigned char)receiveBuffer[1798]);
+
+            for (ucindx1 = 0; ucindx1 < 7; ucindx1++) {
+                for (ucindx = 0; ucindx < 8; ucindx++) {
+                    temp_arr[ucindx] = receiveBuffer[1810 + (ucindx1 * 8) + ucindx];
+                }
+                lstate[ucindx1] = (double)getdoublefrom8bytes(temp_arr) / 1e+6;
+            }
+
+            printf("\n EST POS-X: %8.6lf %8.6lf %8.6lf", lstate[0], lstate[1], lstate[2]);
+            printf("\n EST Vel-X: %8.6lf %8.6lf %8.6lf", lstate[3], lstate[4], lstate[5]);
+            fprintf(ODPfile4, " %8.6lf %8.6lf %8.6lf", lstate[0], lstate[1], lstate[2]);
+            fprintf(ODPfile4, " %8.6lf %8.6lf %8.6lf", lstate[3], lstate[4], lstate[5]);
+            
+            unsigned char nSat_indx = 0;
+            while (nSat_indx < 8) {
+                for (ucindx1 = 0; ucindx1 < 7; ucindx1++) {
+                    for (ucindx = 0; ucindx < 8; ucindx++) {
+                        temp_arr[ucindx] = receiveBuffer[1858 + (ucindx1 * 8) + ucindx];
+                    }
+                    IGPSstate[nSat_indx][ucindx1] = (double)getdoublefrom8bytes(temp_arr) / 1e+6;
+                }
+                nSat_indx++;
+            }
+
+            double lRef_State_Err[6] = {0};
+            for (ucindx1 = 0; ucindx1 < 3; ucindx1++) {
+                lRef_State_Err[ucindx1] = (double)SEpochData_UART_RX1.lLeoSvPos[ucindx1] - lstate[ucindx1];
+                lRef_State_Err[ucindx1 + 3] = (double)SEpochData_UART_RX1.fLeoSvVe[ucindx1] - lstate[ucindx1 + 3];
+            }
+            
+            printf("\n LDZ: POS-X: %8.6lf %8.6lf %8.6lf", lRef_State_Err[0], lRef_State_Err[1], lRef_State_Err[2]);
+            printf("\n LDZ: Vel-X: %8.6lf %8.6lf %8.6lf", lRef_State_Err[3], lRef_State_Err[4], lRef_State_Err[5]);
+            fprintf(ODPfile4, " \t LDZ: POS-X: %8.6lf %8.6lf %8.6lf", lRef_State_Err[0], lRef_State_Err[1], lRef_State_Err[2]);
+            fprintf(ODPfile4, " \t LDZ: Vel-X: %8.6lf %8.6lf %8.6lf", lRef_State_Err[3], lRef_State_Err[4], lRef_State_Err[5]);
+            
+            fflush(fp3);
+            fflush(ODPfile4);
+        } else {
+            printf("No data received or error occurred\n");
+        }
+        
+        Sleep(8);
+    }
+
+    if (!CloseHandle(hSerial)) {
+        printf("Error closing port: %d\n", GetLastError());
+        return 1;
+    }
+
+    printf("Serial port successfully closed\n");
+    fclose(fp3);
+    fclose(ODPfile4);
+
+    return 0;
+}
+```
