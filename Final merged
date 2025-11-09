@@ -1,0 +1,294 @@
+What I've understood:
+
+You want to merge both codes so that:
+
+1. Use Code 2's serial reception (receiving from COM17 every ~8ms)
+2. Use Code 1's GPS data structure and processing (GPSPacketInp struct and print_GPSPacketInp function)
+3. Output engineering decimal data (like Code 1) instead of raw hex data
+4. Remove transmission logic from Code 2, keep only reception
+5. Process the received serial data using Code 1's parsing and printing logic
+
+Key changes needed:
+
+· Replace Code 2's SEpochData_UART1 with Code 1's GPSPacketInp
+· Replace Code 2's manual data extraction with Code 1's print_GPSPacketInp function
+· Modify print_GPSPacketInp to write to file instead of console
+· Keep Code 2's serial port setup and reception loop
+
+Here's the merged code:
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <windows.h>
+#include <string.h>
+#include <stdint.h>
+
+#define COM_PORT "COM17"
+#define BAUD_RATE CBR_115200
+#define BUFFER_SIZE 1800
+#define TX_Buffer_size 1800
+#define NUM_GPS_CHANNEL 16
+#define RECEIVE_BUFFER_SIZE 1928
+
+typedef unsigned char uint8_t;
+typedef unsigned short uint16_t;
+typedef unsigned int uint32_t;
+
+#pragma pack(push,1)
+typedef struct {
+    uint16_t header;
+    uint8_t msmt_counter;
+    uint8_t nav_state;
+    uint8_t antenna_status;
+    uint8_t pvt_status;
+    uint8_t gps_nav_sats;
+    uint8_t navic_sats;
+    uint16_t GPS_MK_Num;
+    double IDGps_Tow;
+    double IDRec_Pos[3];
+    float IDRec_Vel[3];
+    float IDGdop_odopt[2];
+    uint16_t Dlt_time[2];
+    uint16_t Checksum;
+    uint16_t Nav_Week_Num;
+    double IDNav_Tow;
+    uint8_t Type_22_Data[37];
+    uint8_t Sv_status[16];
+    uint8_t Sv_id[16];
+    uint8_t Cndr[16];
+    double IDPR[16];
+    double IDDR[16];
+    double IDCR[16];
+    double IDBias;
+    double IDDrift;
+    uint8_t Ephemeris[71];
+    uint16_t Msg_Rec_ctr;
+    uint8_t Debug_info[22];
+    uint8_t SV_ID[14];
+    uint8_t CNDR[14];
+    double IDPseudo_Range[4];
+    double IDDelta_Range[4];
+    double IDGPSSV_Pos[NUM_GPS_CHANNEL][7];
+    uint8_t Elevation[NUM_GPS_CHANNEL];
+    uint16_t Azimuth[NUM_GPS_CHANNEL];
+    uint16_t Uart_Tx_ctr;
+    uint8_t Ast_Rst_ctr;
+    uint8_t Ast_Rst_id;
+    uint8_t Ast_Debug[100];
+    uint16_t Checksum1;
+} GPSPacketInp;
+#pragma pack(pop)
+
+void print_GPSPacketInp(FILE *fout, const GPSPacketInp *p) {
+    fprintf(fout, "\n");
+    fprintf(fout, "header: 0x%04x\n", p->header);
+    fprintf(fout, "msmt_counter: %u\n", p->msmt_counter);
+    fprintf(fout, "nav_state: %u\n", p->nav_state);
+    fprintf(fout, "antenna_status: %u\n", p->antenna_status);
+    fprintf(fout, "pvt_status: %u\n", p->pvt_status);
+    fprintf(fout, "gps_nav_sats: %u\n", p->gps_nav_sats);
+    fprintf(fout, "navic_sats: %u\n", p->navic_sats);
+    fprintf(fout, "GPS_MK_Num: %u\n", p->GPS_MK_Num);
+    fprintf(fout, "IDGps_Tow: %1f\n", p->IDGps_Tow);
+    fprintf(fout, "\n");
+    
+    for (int i = 0; i < 2; i++)
+        fprintf(fout, "%d: %u\n", i, p->Dlt_time[i]);
+
+    fprintf(fout, " \tsps\tposition \t velocity \n");
+    for (int i = 0; i < 3; i++)
+        fprintf(fout, "%d:\t %1f \t %f \n", i, p->IDRec_Pos[i], p->IDRec_Vel[i]);
+    
+    fprintf(fout, "\n");
+    for (int i = 0; i < 16; i++)
+        fprintf(fout, "%u %u %u", i, p->Sv_status[i], p->Cndr[i]);
+    
+    fprintf(fout, "\n\n");
+    for (int i = 0; i < 16; i++)
+        fprintf(fout, "Cndr(%d): %u ", i, p->Cndr[i]);
+    
+    fprintf(fout, "\n\n");
+    for (int i = 0; i < 16; i++)
+        fprintf(fout, "IDPR(%d): %1f\n", i, p->IDPR[i]);
+    
+    fprintf(fout, "\n\n");
+    for (int i = 0; i < 16; i++)
+        fprintf(fout, "IDDR(%d): %1f\n", i, p->IDDR[i]);
+    
+    fprintf(fout, "\n\n");
+    for (int i = 0; i < 16; i++)
+        fprintf(fout, "IDCR(%d): %1f\n", i, p->IDCR[i]);
+    
+    fprintf(fout, "\n\n");
+    fprintf(fout, "IDBias: %1f\n", p->IDBias);
+    fprintf(fout, "IDDrift: %1f\n", p->IDDrift);
+    
+    for (int i = 0; i < 71; i++)
+        fprintf(fout, "Ephemeris(%d): %u\n", i, p->Ephemeris[i]);
+    
+    fprintf(fout, "Msg_Rec_ctr: %u\n", p->Msg_Rec_ctr);
+    
+    for (int i = 0; i < 22; i++)
+        fprintf(fout, "Debug_info(%d): %u\n", i, p->Debug_info[i]);
+    
+    for (int i = 0; i < 14; i++)
+        fprintf(fout, "SV_ID(%d): %u\n", i, p->SV_ID[i]);
+    
+    for (int i = 0; i < 14; i++)
+        fprintf(fout, "CNDR(%d): %u\n", i, p->CNDR[i]);
+    
+    for (int i = 0; i < 4; i++)
+        fprintf(fout, "IDPseudo_Range[%d]: %lf\n", i, p->IDPseudo_Range[i]);
+    
+    for (int i = 0; i < 4; i++)
+        fprintf(fout, "IDDelta_Range[%d]: %lf\n", i, p->IDDelta_Range[i]);
+    
+    for (int i = 0; i < NUM_GPS_CHANNEL; i++)
+        for (int j = 0; j < 7; j++)
+            fprintf(fout, "IDGPSSV_Pos[%d][%d]: %lf\n", i, j, p->IDGPSSV_Pos[i][j]);
+    
+    for (int i = 0; i < NUM_GPS_CHANNEL; i++)
+        fprintf(fout, "Elevation[%d]: %u\n", i, p->Elevation[i]);
+    
+    for (int i = 0; i < NUM_GPS_CHANNEL; i++)
+        fprintf(fout, "Azimuth[%d]: %u\n", i, p->Azimuth[i]);
+    
+    fprintf(fout, "Uart_Tx_ctr: %u\n", p->Uart_Tx_ctr);
+    fprintf(fout, "Ast_Rst_ctr: %u\n", p->Ast_Rst_ctr);
+    fprintf(fout, "Ast_Rst_id: %u\n", p->Ast_Rst_id);
+    
+    for (int i = 0; i < 100; i++)
+        fprintf(fout, "Ast_Debug[%d]: %u\n", i, p->Ast_Debug[i]);
+    
+    fprintf(fout, "Checksum1: %u\n", p->Checksum1);
+    fprintf(fout, "\n\n");
+}
+
+int main() {
+    HANDLE hSerial;
+    DCB dcbSerialParams = {0};
+    COMMTIMEOUTS timeouts = {0};
+    DWORD bytesRead;
+    BOOL readStatus;
+    unsigned char receiveBuffer[RECEIVE_BUFFER_SIZE] = {0};
+    unsigned int Frame_ctr = 0;
+
+    FILE *fout = fopen("engineering_data.txt", "wt");
+    if (!fout) {
+        printf("Error opening output file\n");
+        return -1;
+    }
+
+    printf("GPS Data Reception Program - Merged Version\n");
+    printf("Receiving from %s at %d baud\n", COM_PORT, BAUD_RATE);
+
+    hSerial = CreateFile(
+        "\\\\.\\COM17",
+        GENERIC_READ,
+        0,
+        NULL,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        NULL);
+
+    if (hSerial == INVALID_HANDLE_VALUE) {
+        printf("Error opening serial port! Error code: %d\n", GetLastError());
+        fclose(fout);
+        return 1;
+    }
+
+    dcbSerialParams.DCBlength = sizeof(dcbSerialParams);
+
+    if (!GetCommState(hSerial, &dcbSerialParams)) {
+        printf("Error getting device state. Error code: %d\n", GetLastError());
+        CloseHandle(hSerial);
+        fclose(fout);
+        return 1;
+    }
+
+    dcbSerialParams.BaudRate = BAUD_RATE;
+    dcbSerialParams.ByteSize = 8;
+    dcbSerialParams.StopBits = ONESTOPBIT;
+    dcbSerialParams.Parity = NOPARITY;
+    dcbSerialParams.fOutxCtsFlow = FALSE;
+    dcbSerialParams.fRtsControl = RTS_CONTROL_DISABLE;
+    dcbSerialParams.fOutX = FALSE;
+    dcbSerialParams.fInX = FALSE;
+
+    if (!SetCommState(hSerial, &dcbSerialParams)) {
+        printf("Error setting device parameters. Error code: %d\n", GetLastError());
+        CloseHandle(hSerial);
+        fclose(fout);
+        return 1;
+    }
+
+    timeouts.ReadIntervalTimeout = 8;
+    timeouts.ReadTotalTimeoutConstant = 8;
+    timeouts.ReadTotalTimeoutMultiplier = 0;
+    timeouts.WriteTotalTimeoutConstant = 0;
+    timeouts.WriteTotalTimeoutMultiplier = 0;
+
+    if (!SetCommTimeouts(hSerial, &timeouts)) {
+        printf("Error setting timeouts. Error code: %d\n", GetLastError());
+        CloseHandle(hSerial);
+        fclose(fout);
+        return 1;
+    }
+
+    if (!PurgeComm(hSerial, PURGE_RXCLEAR | PURGE_TXCLEAR)) {
+        printf("Error flushing port: %d\n", GetLastError());
+    } else {
+        printf("Successfully flushed serial buffers\n");
+    }
+
+    printf("Beginning reception...\n");
+    
+    while (1) {
+        readStatus = ReadFile(
+            hSerial,
+            receiveBuffer,
+            sizeof(GPSPacketInp),
+            &bytesRead,
+            NULL);
+
+        if (readStatus && bytesRead == sizeof(GPSPacketInp)) {
+            Frame_ctr++;
+            printf("Successfully received %d bytes (Frame: %d)\n", bytesRead, Frame_ctr);
+
+            GPSPacketInp packet;
+            memcpy(&packet, receiveBuffer, sizeof(GPSPacketInp));
+            
+            fprintf(fout, "=== Frame %d ===\n", Frame_ctr);
+            print_GPSPacketInp(fout, &packet);
+            fflush(fout);
+            
+            printf("Frame %d processed and saved to file\n", Frame_ctr);
+        } else if (readStatus && bytesRead > 0) {
+            printf("Received incomplete packet: %d bytes (expected: %d)\n", bytesRead, sizeof(GPSPacketInp));
+        } else {
+            DWORD error = GetLastError();
+            if (error != ERROR_IO_PENDING) {
+                printf("Read error or timeout: %d\n", error);
+            }
+        }
+        
+        Sleep(8);
+    }
+
+    CloseHandle(hSerial);
+    fclose(fout);
+    printf("Serial port closed\n");
+
+    return 0;
+}
+```
+
+Key features of merged code:
+
+· Receives GPS data from COM17 every ~8ms
+· Uses Code 1's GPSPacketInp structure for data parsing
+· Outputs engineering decimal data to "engineering_data.txt"
+· Processes all GPS navigation data (positions, velocities, satellite info, etc.)
+· No transmission logic - pure reception and processing
+· Proper error handling for serial communication
