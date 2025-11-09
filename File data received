@@ -1,0 +1,169 @@
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#define BUFFER_SIZE 1800
+#define TX_Buffer_size 1800
+#define NUM_GPS_CHANNEL 16
+typedef unsigned char uint8_t;
+typedef unsigned short uint16_t;
+typedef unsigned int uint32_t;
+
+#pragma pack(push,1)
+typedef struct {
+    uint16_t header;
+    uint8_t msmt_counter;
+    uint8_t nav_state;
+    uint8_t antenna_status;
+    uint8_t pvt_status;
+    uint8_t gps_nav_sats;
+    uint8_t navic_sats;
+    uint16_t GPS_MK_Num;
+    double IDGps_Tow;
+    double IDRec_Pos[3];
+    float IDRec_Vel[3];
+    float IDGdop_odopt[2];
+    uint16_t Dlt_time[2];
+    uint16_t Checksum;
+    uint16_t Nav_Week_Num;
+    double IDNav_Tow;
+    uint8_t Type_22_Data[37];
+    uint8_t Sv_status[16];
+    uint8_t Sv_id[16];
+    uint8_t Cndr[16];
+    double IDPR[16];
+    double IDDR[16];
+    double IDCR[16];
+    double IDBias;
+    double IDDrift;
+    uint8_t Ephemeris[71];
+    uint16_t Msg_Rec_ctr;
+    uint8_t Debug_info[22];
+    uint8_t SV_ID[14];
+    uint8_t CNDR[14];
+    double IDPseudo_Range[4];
+    double IDDelta_Range[4];
+    double IDGPSSV_Pos[NUM_GPS_CHANNEL][7];
+    uint8_t Elevation[NUM_GPS_CHANNEL];
+    uint16_t Azimuth[NUM_GPS_CHANNEL];
+    uint16_t Uart_Tx_ctr;
+    uint8_t Ast_Rst_ctr;
+    uint8_t Ast_Rst_id;
+    uint8_t Ast_Debug[100];
+    uint16_t Checksum1;
+} GPSPacketInp;
+
+#pragma pack(pop)
+
+void print_GPSPacketInp(FILE *fout, const GPSPacketInp *p) {
+    fprintf(fout, "\n");
+    fprintf(fout, "header: 0x%04x\n", p->header);
+    fprintf(fout, "msmt_counter: %u\n", p->msmt_counter);
+    fprintf(fout, "nav_state: %u\n", p->nav_state);
+    fprintf(fout, "antenna_status: %u\n", p->antenna_status);
+    fprintf(fout, "pvt_status: %u\n", p->pvt_status);
+    fprintf(fout, "gps_nav_sats: %u\n", p->gps_nav_sats);
+    fprintf(fout, "navic_sats: %u\n", p->navic_sats);
+    fprintf(fout, "GPS_MK_Num: %u\n", p->GPS_MK_Num);
+    fprintf(fout, "IDGps_Tow: %1f\n", p->IDGps_Tow);
+    fprintf(fout, "\n");
+    for (int i = 0; i < 2 ; i++)
+    fprintf(fout, "%d: %u\n", i, p->Dlt_time[i]);
+
+    fprintf(fout, " \tsps\tposition \t velocity \n");
+    for (int i = 0; i < 3; i++)
+    fprintf(fout, "%d:\t %1f \t %f \n", i, p->IDRec_Pos[i],p->IDRec_Vel[i]);
+    fprintf(fout, "\n");
+    for (int i = 0; i < 16; i++)
+    fprintf(fout, "%u %u %u", i, p->Sv_status[i],p->Cndr[i]);
+    fprintf(fout, "\n\n");
+    for (int i = 0; i < 16; i++)
+    fprintf(fout, "Cndr(%d): %u ", i, p->Cndr[i]);
+    fprintf(fout, "\n\n");
+    for (int i = 0; i < 16; i++)
+    fprintf(fout, "IDPR(%d): %1f\n", i, p->IDPR[i]);
+    fprintf(fout, "\n\n");
+    for (int i = 0; i < 16; i++)
+    fprintf(fout, "IDDR(%d): %1f\n", i, p->IDDR[i]);
+    fprintf(fout, "\n\n");
+    for (int i = 0; i < 16; i++)
+    fprintf(fout, "IDCR(%d): %1f\n", i, p->IDCR[i]);
+    fprintf(fout, "\n\n");
+    fprintf(fout, "IDBias: %1f\n", p->IDBias);
+    fprintf(fout, "IDDrift: %1f\n", p->IDDrift);
+    for (int i = 0; i < 71; i++)
+    fprintf(fout, "Ephemeris(%d): %u\n", i, p->Ephemeris[i]);
+    fprintf(fout, "Msg_Rec_ctr: %u\n", p->Msg_Rec_ctr);
+    for (int i = 0; i < 22; i++)
+    fprintf(fout, "Debug_info(%d): %u\n", i, p->Debug_info[i]);
+    for (int i = 0; i < 14; i++)
+    fprintf(fout, "SV_ID(%d): %u\n", i, p->SV_ID[i]);
+    for (int i = 0; i < 14; i++)
+    fprintf(fout, "CNDR(%d): %u\n", i, p->CNDR[i]);
+    for (int i = 0; i < 4; i++)
+    fprintf(fout, "IDPseudo_Range[%d]: %lf\n", i, p->IDPseudo_Range[i]);
+    for (int i = 0; i < 4; i++)
+    fprintf(fout, "IDDelta_Range[%d]: %lf\n", i, p->IDDelta_Range[i]);
+    for (int i = 0; i < NUM_GPS_CHANNEL; i++)
+    for (int j = 0; j < 7; j++)
+    fprintf(fout, "IDGPSSV_Pos[%d][%d]: %lf\n", i, j, p->IDGPSSV_Pos[i][j]);
+    for (int i = 0; i < NUM_GPS_CHANNEL; i++)
+    fprintf(fout, "Elevation[%d]: %u\n", i, p->Elevation[i]);
+    for (int i = 0; i < NUM_GPS_CHANNEL; i++)
+    fprintf(fout, "Azimuth[%d]: %u\n", i, p->Azimuth[i]);
+    fprintf(fout, "Uart_Tx_ctr: %u\n", p->Uart_Tx_ctr);
+    fprintf(fout, "Ast_Rst_ctr: %u\n", p->Ast_Rst_ctr);
+    fprintf(fout, "Ast_Rst_id: %u\n", p->Ast_Rst_id);
+    for (int i = 0; i < 100; i++)
+    fprintf(fout, "Ast_Debug[%d]: %u\n", i, p->Ast_Debug[i]);
+    fprintf(fout, "Checksum1: %u\n", p->Checksum1);
+    fprintf(fout, "\n\n");
+}
+
+int main() {
+    char filename[260];
+    printf("Enter input file name: ");
+    scanf("%s", filename);
+
+    FILE *fin = fopen(filename, "rt+");
+    if (!fin) {
+    printf("Error opening input file\n");
+    return -1;
+}
+
+    FILE *fout = fopen("1.txt", "wt");
+    if (!fout) {
+    printf("Error opening output file\n");
+    fclose(fin);
+    return -1;
+}
+
+    unsigned char buffer[TX_Buffer_size];
+    memset(buffer, 0, sizeof(buffer));
+
+    GPSPacketInp packet;
+    memset(&packet, 0, sizeof(packet));
+
+    while (!feof(fin)) {
+    int i = 0;
+    while (i < TX_Buffer_size) {
+    unsigned int byte;
+    int result = fscanf(fin, "%02x", &byte);
+    if (result == 1) {
+    buffer[i] = (unsigned char)byte;
+    i++;
+    } else {
+    break;
+    }
+    }
+
+    memcpy(&packet, buffer, sizeof(GPSPacketInp));
+    print_GPSPacketInp(fout, &packet);
+}
+
+fclose(fin);
+fclose(fout);
+return 0;
+}
+```
+
